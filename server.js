@@ -44,6 +44,7 @@ app.prepare().then(() => {
         });
 
         socket.on('terminal-input', (data) => {
+            console.log('[TERMINAL] Input received:', data);
             ptyProcess.write(data);
         });
 
@@ -52,6 +53,7 @@ app.prepare().then(() => {
         });
 
         ptyProcess.on('data', (data) => {
+            console.log('[TERMINAL] Output emitted:', data.length, 'bytes');
             socket.emit('terminal-output', data);
         });
 

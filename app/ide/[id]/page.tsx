@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { FileCode, Folder, ChevronRight, Save, Play, Code2, FilePlus, FolderPlus, RefreshCcw, Search, Settings, UserCircle, Trash2 } from "lucide-react";
+import { FileCode, Folder, ChevronRight, Save, Play, Code2, FilePlus, FolderPlus, RefreshCcw, Search, Settings, UserCircle, Trash2, ArrowLeft, Sparkles, Send, X } from "lucide-react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
@@ -26,6 +26,12 @@ export default function IDEPage() {
     const [treeData, setTreeData] = useState<Record<string, FileNode[]>>({});
     const [creating, setCreating] = useState<{ type: "file" | "folder"; parentPath: string } | null>(null);
     const [newItemName, setNewItemName] = useState("");
+    const [sidebarWidth, setSidebarWidth] = useState(260);
+    const [isResizing, setIsResizing] = useState(false);
+    const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+    const [aiMessages, setAiMessages] = useState<{ role: string, content: string }[]>([]);
+    const [aiInput, setAiInput] = useState("");
+    const [isAILoading, setIsAILoading] = useState(false);
 
     const router = useRouter();
     const { data: session, status } = useSession();
@@ -41,6 +47,35 @@ export default function IDEPage() {
             fetchRepoDetails();
         }
     }, [status, id]);
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isResizing) return;
+            let newWidth = e.clientX - 48; // subtract activity bar width (w-12 = 48px)
+            if (newWidth < 160) newWidth = 160;
+            if (newWidth > 500) newWidth = 500;
+            setSidebarWidth(newWidth);
+        };
+
+        const handleMouseUp = () => {
+            setIsResizing(false);
+        };
+
+        if (isResizing) {
+            window.addEventListener("mousemove", handleMouseMove);
+            window.addEventListener("mouseup", handleMouseUp);
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+        } else {
+            document.body.style.cursor = "default";
+            document.body.style.userSelect = "auto";
+        }
+
+        return () => {
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", handleMouseUp);
+        };
+    }, [isResizing]);
 
     // Handle Save Shortcut
     useEffect(() => {
@@ -215,8 +250,8 @@ export default function IDEPage() {
                     onDrop={handleDrop}
                     onClick={() => handleFileClick(item)}
                     className={`flex items-center gap-2 py-1 px-2 cursor-pointer text-sm group transition-colors ${isActive ? "bg-blue-600/20 text-blue-400" :
-                            isOver ? "bg-blue-500/30 text-blue-300" :
-                                "hover:bg-gray-800/50 text-gray-400 hover:text-gray-200"
+                        isOver ? "bg-blue-500/30 text-blue-300" :
+                            "hover:bg-gray-800/50 text-gray-400 hover:text-gray-200"
                         }`}
                     style={{ paddingLeft: `${depth * 12 + 12}px` }}
                 >
@@ -309,6 +344,45 @@ export default function IDEPage() {
         }
     };
 
+    const handleSendMessage = async () => {
+        if (!aiInput.trim() || isAILoading) return;
+
+        const userMessage = { role: "user", content: aiInput };
+        const newMessages = [...aiMessages, userMessage];
+        setAiMessages(newMessages);
+        setAiInput("");
+        setIsAILoading(true);
+
+        try {
+            // Add code context if a file is open
+            const contextPrompt = activeFile
+                ? `Current file: ${activeFile}\nContent:\n${code}\n\nUser Question: ${aiInput}`
+                : aiInput;
+
+            const res = await fetch("/api/ai", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    messages: [
+                        ...aiMessages,
+                        { role: "user", content: contextPrompt }
+                    ]
+                }),
+            });
+
+            const data = await res.json();
+            if (data.choices?.[0]?.message) {
+                setAiMessages([...newMessages, data.choices[0].message]);
+            } else {
+                setAiMessages([...newMessages, { role: "assistant", content: "Error: " + (data.error || "Failed to get response") }]);
+            }
+        } catch (error: any) {
+            setAiMessages([...newMessages, { role: "assistant", content: "Error: " + error.message }]);
+        } finally {
+            setIsAILoading(false);
+        }
+    };
+
     const getLanguage = (filepath: string | null) => {
         if (!filepath) return "javascript";
         const ext = filepath.split('.').pop()?.toLowerCase();
@@ -335,11 +409,24 @@ export default function IDEPage() {
         <div className="flex h-screen bg-gray-950 text-white overflow-hidden font-sans">
             {/* Activity Bar */}
             <div className="w-12 bg-gray-900/50 border-r border-gray-800 flex flex-col items-center py-4 gap-6">
+                <div
+                    className="p-2 text-gray-400 hover:text-white transition-colors cursor-pointer mb-2"
+                    onClick={() => router.push('/dashboard')}
+                    title="Back to Dashboard"
+                >
+                    <ArrowLeft size={24} />
+                </div>
                 <div className="p-2 text-white border-l-2 border-blue-500 cursor-pointer">
                     <Code2 size={24} />
                 </div>
                 <div className="p-2 text-gray-500 hover:text-white transition-colors cursor-pointer">
                     <Search size={24} />
+                </div>
+                <div
+                    className={`p-2 transition-colors cursor-pointer ${isAIChatOpen ? "text-blue-500 border-l-2 border-blue-500" : "text-gray-500 hover:text-white"}`}
+                    onClick={() => setIsAIChatOpen(!isAIChatOpen)}
+                >
+                    <Sparkles size={24} />
                 </div>
                 <div className="mt-auto flex flex-col gap-6 items-center pb-4">
                     <Settings className="text-gray-500 hover:text-white cursor-pointer" size={24} />
@@ -348,7 +435,10 @@ export default function IDEPage() {
             </div>
 
             {/* Sidebar Explorer */}
-            <div className="w-64 border-r border-gray-800 flex flex-col bg-gray-950">
+            <div
+                style={{ width: `${sidebarWidth}px` }}
+                className="border-r border-gray-800 flex flex-col bg-gray-950 shrink-0"
+            >
                 <div className="h-9 px-4 flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-500 font-bold border-b border-gray-800/50">
                     Explorer
                     <div className="flex gap-2">
@@ -406,6 +496,12 @@ export default function IDEPage() {
                     </div>
                 </div>
             </div>
+
+            {/* Resizer Handle */}
+            <div
+                onMouseDown={() => setIsResizing(true)}
+                className={`w-1 cursor-col-resize transition-colors z-20 hover:bg-blue-500/50 ${isResizing ? "bg-blue-500/50" : "bg-transparent"}`}
+            />
 
             {/* Main Area */}
             <div className="flex-1 flex flex-col min-w-0 bg-black">
@@ -483,6 +579,60 @@ export default function IDEPage() {
                     </div>
                 </div>
             </div>
+
+            {/* AI Chat Panel */}
+            {isAIChatOpen && (
+                <div className="w-80 border-l border-gray-800 bg-gray-950 flex flex-col shrink-0">
+                    <div className="h-9 px-4 flex items-center justify-between border-b border-gray-800 text-[11px] uppercase tracking-wider text-gray-500 font-bold">
+                        AI Assistant
+                        <X
+                            size={14}
+                            className="cursor-pointer hover:text-white"
+                            onClick={() => setIsAIChatOpen(false)}
+                        />
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {aiMessages.length === 0 && (
+                            <div className="text-center text-gray-600 mt-10">
+                                <Sparkles size={32} className="mx-auto mb-2 opacity-20" />
+                                <p className="text-sm">Ask me anything about your project!</p>
+                            </div>
+                        )}
+                        {aiMessages.map((msg, i) => (
+                            <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                <div className={`max-w-[90%] rounded-lg p-3 text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-200'}`}>
+                                    {msg.content}
+                                </div>
+                            </div>
+                        ))}
+                        {isAILoading && (
+                            <div className="flex justify-start">
+                                <div className="bg-gray-800 text-gray-400 rounded-lg p-3 text-sm animate-pulse">
+                                    AI is thinking...
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="p-4 border-t border-gray-800">
+                        <div className="flex gap-2">
+                            <input
+                                className="flex-1 bg-gray-900 border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-blue-500"
+                                placeholder="Ask AI..."
+                                value={aiInput}
+                                onChange={(e) => setAiInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                            />
+                            <button
+                                onClick={handleSendMessage}
+                                disabled={isAILoading}
+                                className="p-2 bg-blue-600 rounded-md hover:bg-blue-500 disabled:opacity-50 transition-colors"
+                            >
+                                <Send size={16} />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
