@@ -2,6 +2,7 @@ from langchain_groq import ChatGroq
 import json
 from dotenv import load_dotenv
 import os
+from typing import Dict
 import re
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -12,9 +13,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=API_KEY)
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY)
 
-def extract_json_list(text: str) -> list:
+def extract_json(text: str) -> Dict:
     """
-    Safely extracts the first valid JSON array from text.
+    Safely extracts the first valid JSON object from text.
     Handles markdown, prose, and partial outputs.
     """
 
@@ -22,8 +23,8 @@ def extract_json_list(text: str) -> list:
     cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip()
 
     # Find the FIRST '[' and LAST ']'
-    start = cleaned.find("[")
-    end = cleaned.rfind("]")
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
 
     if start == -1 or end == -1 or end <= start:
         raise ValueError(f"No JSON array found in LLM output:\n{text}")
@@ -36,56 +37,102 @@ def extract_json_list(text: str) -> list:
         raise ValueError(
             f"Failed to parse JSON array.\nExtracted:\n{json_str}\n\nOriginal:\n{text}"
         ) from e
-    
 
 def PlanNode(state):
     prompt = f"""
-You are an autonomous software engineer.
+You are an autonomous software engineer agent.
 
-Your task is to output ONLY a JSON array.
-No explanations.
-No markdown.
-No text before or after.
+You CONTROL execution flow and MAY provide user-facing information,
+but you MUST choose EXACTLY ONE action per response.
 
-Each item MUST be a string describing ONE concrete action
-1) Read a file:
-   "read::relative/path/to/file"
-
-2) Write or update a file:
-   "write::relative/path/to/file::FULL_FILE_CONTENT"
-
-3) Run a command:
-   "run <command>"
-
-Goal:
+GOAL:
 {state['goal']}
 
-Files:
+CURRENT PLAN:
+{state['plans']}
+
+CURRENT FILES:
 {state['files']}
 
-Last output:
-{state['last_output']}
+CURRENT STEP INDEX:
+{state['step_index']}
 
-Error:
+EXECUTION HISTORY:
+{state['execution_history']}
+
+FILES READ (with content):
+{state['file_context']}
+
+RUNTIME OUTPUT / ERRORS:
+{state['runtime_context']}
+
+LAST ERROR (if any):
 {state['error']}
 
+DECISION RULES (CRITICAL):
+- Choose ONLY ONE action: "next" OR "done"
+- You are NOT allowed to choose multiple actions
+- Do NOT update or modify the plan in this response
+- Never explain your reasoning
+
+ACTION DEFINITIONS:
+1. "next"
+   - Choose this if there is still work required to reach the GOAL
+   - Provide exactly ONE executable STEP
+
+2. "done"
+   - Choose this ONLY if the GOAL is fully achieved
+   - Do NOT provide any executable step
+
+STEP FORMAT (ONLY if action = "next"):
+- read::path
+- write::path::content
+- run::<command>::time_limit_in_seconds
+
+ANSWER RULE:
+- "ans" is OPTIONAL
+- Use "ans" ONLY to give concise, helpful information requested by the user
+- If no user-facing answer is needed, set "ans" to null
+
 OUTPUT FORMAT (STRICT):
-[
-  "step 1",
-  "step 2",
-  "step 3"
-]
+- Output ONLY valid JSON
+- No markdown
+- No extra text
+- No explanations
+
+JSON SCHEMA (MUST MATCH EXACTLY):
+
+{{
+  "action": "next | done",
+  "step": "<step string if action = next, otherwise null>",
+  "ans": "<string if needed, otherwise null>"
+}}
 """
-    # print(prompt)
+    
     res = llm.invoke(prompt)
     try:
-        plan = extract_json_list(res.content)
-        print(plan)
+        print(res.content)
+        decision = extract_json(res.content)
+        # print(decision)
+
+        if decision["action"] == "done":
+            return {**state, "done": True, "ans": decision.get("ans", "")}
+
+        if decision["action"] == "update_plan":
+            return {
+                **state,
+                "plans": decision["plan"],
+                "step_index": 0,
+                "error": None,
+                "ans": decision.get("ans", "")
+            }
+
+        # action == next
+        return {
+            **state,
+            "current_step": decision["step"],
+            "ans": decision.get("ans", ""),
+            "error": None
+        }
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON from LLM: {res.content}") from e
-    return {
-        **state,
-        "plans": plan,
-        "current_step": plan[0] if plan else None,
-        "error": None
-    }

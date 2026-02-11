@@ -1,4 +1,5 @@
 from tools import write_file, run_command, read_file
+import os
 
 def ExecuteNode(state):
     step = state["current_step"]
@@ -7,37 +8,68 @@ def ExecuteNode(state):
     if not step:
         return state
 
-    if step.startswith("write"):
-        _, path, content = step.split("::", 2)
-        write_file(f"{cwd}/{path}", content)
-        return {**state, "just_read": True}
+    # record executed step
+    state["execution_history"].append(step)
 
-    if step.startswith("run"):
-        cmd = step.replace("run", "", 1).strip()
-        result = run_command(cmd, cwd)
-        output = result["stdout"] + result["stderr"]
-
-        if result["exit_code"] != 0:
-            return {**state, "error": output, "last_output": output, "just_read": False}
-
-        return {**state, "last_output": output, "just_read": True}
-
-    if step.startswith("read") or step.startswith("open"):
-        # print("reading : ")
+    # -------------------------
+    # READ / OPEN
+    # -------------------------
+    if step.startswith(("read::", "open::")):
         try:
             _, path = step.split("::", 1)
-            # print(path)
-            content = read_file(f"{cwd}/{path}")
-            return {**state, "last_output": content, "just_read": True}
-        
-        except Exception as e:
-            return {
-                **state,
-                "error": e,
-                "just_read": True
-            }
+            full_path = os.path.join(cwd, path)
 
-    return {
-        **state,
-        "error": f"unknown command {state['current_step']}"
-    }
+            content = read_file(full_path)
+
+            # persist file context
+            state["file_context"][path] = content
+            print("read_content: ", content[:100])
+
+            # also expose to planner as recent output
+            state["last_output"] = (
+                f"[READ FILE: {path}]\n{content}"
+            )
+
+            return state
+
+        except Exception as e:
+            state["error"] = f"Failed to read {step}: {str(e)}"
+            return state
+
+    # -------------------------
+    # WRITE
+    # -------------------------
+    if step.startswith("write::"):
+        try:
+            _, path, content = step.split("::", 2)
+            write_file(os.path.join(cwd, path), content)
+            return state
+        except Exception as e:
+            state["error"] = f"Failed to write {step}: {str(e)}"
+            return state
+
+    # -------------------------
+    # RUN
+    # -------------------------
+    if step.startswith("run::"):
+        _,cmd, time = step.split("::", 2)
+        result = run_command(cmd, cwd, time)
+        output = result["stdout"] + result["stderr"]
+
+        state["runtime_context"].append(
+            f"[COMMAND]: {cmd}\n{output}"
+        )
+        state["last_output"] = output
+
+        if result["exit_code"] != 0:
+            state["error"] = output
+        
+        print("command_output: ", output)
+
+        return state
+
+    # -------------------------
+    # UNKNOWN STEP
+    # -------------------------
+    state["error"] = f"Unknown command: {step}"
+    return state

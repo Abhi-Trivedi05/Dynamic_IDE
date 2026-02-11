@@ -1,5 +1,8 @@
 import os
 import subprocess
+import time
+import threading
+import queue
 
 # ---------- FILESYSTEM ----------
 
@@ -36,18 +39,62 @@ def delete_file(path):
         os.remove(path)
 
 # ---------- TERMINAL ----------
+def run_command(cmd, cwd, time_limit):
+    time_limit = int(time_limit)
+    time_limit = max(time_limit, 10)
+    print(f"Running command: {cmd} in {cwd} for {time_limit}s")
 
-def run_command(cmd, cwd):
-    print(f"Running command: {cmd} in {cwd}")
-    process = subprocess.run(
+    process = subprocess.Popen(
         cmd,
         cwd=cwd,
         shell=True,
-        capture_output=True,
-        text=True
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
     )
+
+    q = queue.Queue()
+
+    def reader_thread(pipe, queue):
+        for line in iter(pipe.readline, ""):
+            queue.put(line)
+        pipe.close()
+
+    thread = threading.Thread(
+        target=reader_thread,
+        args=(process.stdout, q),
+        daemon=True
+    )
+    thread.start()
+
+    start = time.time()
+    output = []
+
+    while True:
+        # ⏱ timeout check (NOW WORKS)
+        if time.time() - start >= time_limit:
+            process.terminate()
+            break
+
+        # process finished
+        if process.poll() is not None:
+            break
+
+        try:
+            # non-blocking read
+            line = q.get(timeout=0.1)
+            output.append(line)
+        except queue.Empty:
+            pass
+
+    # drain remaining output
+    while not q.empty():
+        output.append(q.get())
+
     return {
-        "stdout": process.stdout,
-        "stderr": process.stderr,
-        "exit_code": process.returncode
+        "stdout": "".join(output),
+        "stderr": "",
+        "exit_code": process.poll(),
+        "timed_out": (time.time() - start) >= time_limit
     }
