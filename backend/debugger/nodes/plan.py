@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 from typing import Dict
 import re
+from json_repair import repair_json
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
@@ -13,29 +14,39 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=API_KEY)
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY)
 
-def extract_json(text: str) -> Dict:
+def extract_json(text: str):
     """
-    Safely extracts the first valid JSON object from text.
-    Handles markdown, prose, and partial outputs.
+    Extracts and repairs JSON safely from LLM output.
+    Handles:
+    - Markdown fences
+    - Broken escaping
+    - Trailing quotes
+    - Minor JSON corruption
     """
 
     # Remove markdown fences
     cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip()
 
-    # Find the FIRST '[' and LAST ']'
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError(f"No JSON array found in LLM output:\n{text}")
-
-    json_str = cleaned[start : end + 1]
-
+    # Try direct load first
     try:
-        return json.loads(json_str)
-    except json.JSONDecodeError as e:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # Extract first valid JSON object using regex
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if not match:
+        raise ValueError(f"No JSON object found:\n{text}")
+
+    raw_json = match.group(0)
+
+    # Attempt repair
+    try:
+        fixed_json = repair_json(raw_json)
+        return json.loads(fixed_json)
+    except Exception as e:
         raise ValueError(
-            f"Failed to parse JSON array.\nExtracted:\n{json_str}\n\nOriginal:\n{text}"
+            f"Failed to parse JSON.\nExtracted:\n{raw_json}\n\nOriginal:\n{text}"
         ) from e
 
 def PlanNode(state):
@@ -48,14 +59,8 @@ but you MUST choose EXACTLY ONE action per response.
 GOAL:
 {state['goal']}
 
-CURRENT PLAN:
-{state['plans']}
-
 CURRENT FILES:
 {state['files']}
-
-CURRENT STEP INDEX:
-{state['step_index']}
 
 EXECUTION HISTORY:
 {state['execution_history']}
@@ -87,7 +92,8 @@ ACTION DEFINITIONS:
 STEP FORMAT (ONLY if action = "next"):
 - read::path
 - write::path::content
-- run::<command>::time_limit_in_seconds
+- patch::path::unified_diff (in the unified_diff do not add the full path add only the file name)
+- run::<command>::time_limit_in_seconds (e.g. run::ls -la::30) it will run the command in terminal for the specified time and after time is up it will terminate the command and return the output and error if any
 
 ANSWER RULE:
 - "ans" is OPTIONAL
@@ -111,21 +117,12 @@ JSON SCHEMA (MUST MATCH EXACTLY):
     
     res = llm.invoke(prompt)
     try:
-        print(res.content)
+        # print(res.content)
         decision = extract_json(res.content)
-        # print(decision)
+        print(decision)
 
         if decision["action"] == "done":
-            return {**state, "done": True, "ans": decision.get("ans", "")}
-
-        if decision["action"] == "update_plan":
-            return {
-                **state,
-                "plans": decision["plan"],
-                "step_index": 0,
-                "error": None,
-                "ans": decision.get("ans", "")
-            }
+            return {**state, "done": True, "ans": decision.get("ans", ""), "current_step": None}
 
         # action == next
         return {

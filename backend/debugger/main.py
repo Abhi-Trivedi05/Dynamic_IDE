@@ -1,4 +1,3 @@
-import os
 from agent import agent
 from state import AgentState
 
@@ -9,7 +8,7 @@ if __name__ == "__main__":
     state: AgentState = {
         "goal": goal,
         "ans": "",
-        "cwd": r"C:\Users\Apurav\Downloads\Nao_medical",  # Directory path as string
+        "cwd": r"C:\Users\Apurav\Downloads\Nao_medical\nao-medical",  # Directory path as string
         "files": [],  # List of files to be processed
         "file_context": {},  # Empty dictionary for file contexts
         "step_index": 0,  # Index for the next step
@@ -23,7 +22,7 @@ if __name__ == "__main__":
     }
 
     config = {
-        "recursive_limit": 100,  # Limit for recursive operations, if applicable
+        "recursion_limit": 100,  # Limit for recursive operations, if applicable
         "debug": True  # Enable debugging for the agent
     }
 

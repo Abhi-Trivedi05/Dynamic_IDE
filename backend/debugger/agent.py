@@ -9,7 +9,7 @@ from nodes.apply import ApplyNode
 
 graph = StateGraph(AgentState)
 
-graph.add_node("intent", IntentNode)
+# graph.add_node("intent", IntentNode)
 graph.add_node("plan", PlanNode)
 graph.add_node("execute", ExecuteNode)
 graph.add_node("observe", ObserveNode)

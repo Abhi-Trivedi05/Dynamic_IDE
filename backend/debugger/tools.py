@@ -3,6 +3,8 @@ import subprocess
 import time
 import threading
 import queue
+import patch_ng
+import tempfile
 
 # ---------- FILESYSTEM ----------
 
@@ -38,10 +40,50 @@ def delete_file(path):
     if os.path.exists(path):
         os.remove(path)
 
+#------------PATCH---------------
+def apply_unified_patch(path:str, unified_str: str):
+
+    path = os.path.abspath(path)
+    root_dir = os.path.dirname(path)
+    
+    with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as tmp:
+        tmp.write(unified_str)
+        tmp_path = tmp.name
+
+    p = patch_ng.fromfile(tmp_path)
+
+    if not p:
+        raise Exception("invalid patch format")
+
+    success = p.apply(root=root_dir)
+    os.remove(tmp_path)
+    if not success:
+        raise Exception("Patch failed to apply cleanly")
+
+    # Read updated content
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+    
+
+# path = "sample.txt"
+
+# patch_str = """\
+# --- sample.txt
+# +++ sample.txt
+# @@ -6,3 +6,3 @@
+#  nothing
+# -change again
+# +changed
+#  to anything
+# """
+
+# print(apply_unified_patch(r"C:\Users\Apurav\Downloads\Dynamic_IDE\sample.txt", patch_str))
+    
+
 # ---------- TERMINAL ----------
 def run_command(cmd, cwd, time_limit):
     time_limit = int(time_limit)
-    time_limit = max(time_limit, 10)
+    time_limit = min(time_limit, 15)
     print(f"Running command: {cmd} in {cwd} for {time_limit}s")
 
     process = subprocess.Popen(
