@@ -12,7 +12,7 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=API_KEY)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY)
+llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=GEMINI_API_KEY)
 
 def extract_json(text: str):
     """
@@ -24,8 +24,17 @@ def extract_json(text: str):
     - Minor JSON corruption
     """
 
-    # Remove markdown fences
-    cleaned = re.sub(r"```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+    if isinstance(text, list) and len(text) > 0 and isinstance(text[0], dict):
+        text = text[0].get("text", str(text))
+    elif isinstance(text, str) and text.strip().startswith("[{'type':"):
+        import ast
+        try:
+            parsed = ast.literal_eval(text.strip())
+            text = parsed[0].get("text", text)
+        except Exception:
+            pass
+            
+    cleaned = re.sub(r"```(?:json)?", "", str(text), flags=re.IGNORECASE).strip()
 
     # Try direct load first
     try:
@@ -51,11 +60,11 @@ def extract_json(text: str):
 
 def PlanNode(state):
     prompt = f"""
-You are an autonomous software engineer agent.
+You are an autonomous software engineer agent responsible for selecting exactly one tool invocation to make progress toward the GOAL.
 
-You CONTROL execution flow and MAY provide user-facing information,
-but you MUST choose EXACTLY ONE action per response.
+Provide as output ONLY a single JSON object (no surrounding text, no markdown) that matches one of the allowed tool-call shapes below.
 
+CONTEXT:
 GOAL:
 {state['goal']}
 
@@ -74,62 +83,89 @@ RUNTIME OUTPUT / ERRORS:
 LAST ERROR (if any):
 {state['error']}
 
-DECISION RULES (CRITICAL):
-- Choose ONLY ONE action: "next" OR "done"
-- You are NOT allowed to choose multiple actions
-- Do NOT update or modify the plan in this response
-- Never explain your reasoning
+ALLOWED TOOLS (choose EXACTLY ONE):
 
-ACTION DEFINITIONS:
-1. "next"
-   - Choose this if there is still work required to reach the GOAL
-   - Provide exactly ONE executable STEP
-
-2. "done"
-   - Choose this ONLY if the GOAL is fully achieved
-   - Do NOT provide any executable step
-
-STEP FORMAT (ONLY if action = "next"):
-- read::path
-- write::path::content
-- patch::path::unified_diff (in the unified_diff do not add the full path add only the file name)
-- run::<command>::time_limit_in_seconds (e.g. run::ls -la::30) it will run the command in terminal for the specified time and after time is up it will terminate the command and return the output and error if any
-
-ANSWER RULE:
-- "ans" is OPTIONAL
-- Use "ans" ONLY to give concise, helpful information requested by the user
-- If no user-facing answer is needed, set "ans" to null
-
-OUTPUT FORMAT (STRICT):
-- Output ONLY valid JSON
-- No markdown
-- No extra text
-- No explanations
-
-JSON SCHEMA (MUST MATCH EXACTLY):
-
+1) read_file
 {{
-  "action": "next | done",
-  "step": "<step string if action = next, otherwise null>",
-  "ans": "<string if needed, otherwise null>"
+    "name": "read_file",
+    "description": "Read entire contents of a file",
+    "parameters": {{
+        "path": "string"
+    }}
+}}
+
+2) str_replace
+{{
+    "name": "str_replace",
+    "description": "Replace a unique string in a file. old_str must appear EXACTLY ONCE. Include enough surrounding context (3-5 lines) to be unique. Fails if 0 or 2+ matches found.",
+    "parameters": {{
+        "path": "string",
+        "old_str": "string — must be unique in the file",
+        "new_str": "string — replacement content"
+    }}
+}}
+
+3) write_file
+{{
+    "name": "write_file",
+    "description": "Create a new file or fully overwrite. Use only for new files or when str_replace is impossible.",
+    "parameters": {{
+        "path": "string",
+        "content": "string"
+    }}
+}}
+
+4) run_command
+{{
+    "name": "run_command",
+    "description": "Run a shell command",
+    "parameters": {{
+        "command": "string"
+    }}
+}}
+
+If the GOAL is already satisfied, return a single JSON object with "name": "done" and an empty "parameters" object.
+
+STRICT OUTPUT RULES:
+- Output exactly one JSON object matching one of the allowed tool shapes above (or the done object).
+- Do not include any additional keys beyond "name" and "parameters" (an optional "ans" string is allowed).
+- Do not wrap the object in arrays, lists, or markdown fences.
+- Do not provide human explanations or step-by-step reasoning.
+
+EXAMPLE (reading a file):
+{{
+    "name": "read_file",
+    "parameters": {{"path": "backend/debugger/nodes/plan.py"}}
+}}
+
+EXAMPLE (done):
+{{
+    "name": "done",
+    "parameters": {{}}
 }}
 """
     
     res = llm.invoke(prompt)
     try:
-        # print(res.content)
         decision = extract_json(res.content)
-        print(decision)
-
-        if decision["action"] == "done":
-            return {**state, "done": True, "ans": decision.get("ans", ""), "current_step": None}
-
-        # action == next
-        return {
-            **state,
-            "current_step": decision["step"],
-            "ans": decision.get("ans", ""),
-            "error": None
-        }
-    except json.JSONDecodeError as e:
+    except Exception as e:
         raise ValueError(f"Invalid JSON from LLM: {res.content}") from e
+
+    # If the model returned a list, take the first object
+    if isinstance(decision, list) and len(decision) > 0:
+        decision = decision[0]
+
+    if not isinstance(decision, dict) or "name" not in decision or "parameters" not in decision:
+        raise ValueError(f"LLM returned an object that does not match required tool-call shape:\n{decision}")
+
+    print(decision)
+
+    name = decision["name"]
+    params = decision.get("parameters", {})
+    ans = decision.get("ans") if isinstance(decision.get("ans"), str) else None
+
+    if name == "done":
+        return {**state, "done": True, "ans": ans, "current_step": None}
+
+    # Store the chosen tool call object in current_step for downstream executor
+    return {**state, "current_step": {"name": name, "parameters": params}, "ans": ans, "error": None}

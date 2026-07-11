@@ -62,5 +62,5 @@ export default function TerminalComponent({ workingDirectory }: { workingDirecto
         };
     }, []);
 
-    return <div ref={terminalRef} className="w-full h-full" />;
+    return <div ref={terminalRef} className="w-full h-full relative overflow-hidden" />;
 }

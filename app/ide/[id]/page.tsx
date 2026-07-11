@@ -366,7 +366,8 @@ export default function IDEPage() {
                     messages: [
                         ...aiMessages,
                         { role: "user", content: contextPrompt }
-                    ]
+                    ],
+                    cwd: repoPath
                 }),
             });
 
@@ -560,14 +561,13 @@ export default function IDEPage() {
                         )}
                     </div>
 
-                    {/* Terminal Section (Collapsible in real apps, simplified here) */}
-                    <div className="h-64 border-t border-gray-800 bg-gray-950">
+                    <div className="h-64 border-t border-gray-800 bg-gray-950 relative overflow-hidden">
                         <div className="h-8 border-b border-gray-800 px-4 flex items-center gap-6 text-[10px] uppercase font-bold text-gray-500">
                             <span className="text-white border-b border-white py-1 cursor-pointer">Terminal</span>
                             <span className="hover:text-white cursor-pointer">Debug Console</span>
                             <span className="hover:text-white cursor-pointer">Output</span>
                         </div>
-                        <div className="flex-1 h-[calc(100%-2rem)]">
+                        <div className="flex-1 h-[calc(100%-2rem)] relative overflow-hidden">
                             {repoPath ? (
                                 <Terminal workingDirectory={repoPath} />
                             ) : (
@@ -600,7 +600,7 @@ export default function IDEPage() {
                         )}
                         {aiMessages.map((msg, i) => (
                             <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                                <div className={`max-w-[90%] rounded-lg p-3 text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-200'}`}>
+                                <div className={`whitespace-pre-wrap max-w-[90%] rounded-lg p-3 text-sm ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-200'}`}>
                                     {msg.content}
                                 </div>
                             </div>

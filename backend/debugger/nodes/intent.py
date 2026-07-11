@@ -11,7 +11,7 @@ API_KEY = os.getenv("API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # llm = ChatGroq(model="llama-3.3-70b-versatile", groq_api_key=API_KEY)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY)
+llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", google_api_key=GEMINI_API_KEY)
 
 
 def extract_json(text: str) -> dict:
@@ -19,8 +19,17 @@ def extract_json(text: str) -> dict:
     Extracts the first JSON object found in a string.
     Handles markdown code fences and extra text.
     """
-    # Remove ```json and ``` fences
-    cleaned = re.sub(r"```json|```", "", text, flags=re.IGNORECASE).strip()
+    if isinstance(text, list) and len(text) > 0 and isinstance(text[0], dict):
+        text = text[0].get("text", str(text))
+    elif isinstance(text, str) and text.strip().startswith("[{'type':"):
+        import ast
+        try:
+            parsed = ast.literal_eval(text.strip())
+            text = parsed[0].get("text", text)
+        except Exception:
+            pass
+            
+    cleaned = re.sub(r"```(?:json)?", "", str(text), flags=re.IGNORECASE).strip()
 
     # Extract first {...} block
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)

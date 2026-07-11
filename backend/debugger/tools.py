@@ -41,43 +41,34 @@ def delete_file(path):
         os.remove(path)
 
 #------------PATCH---------------
-def apply_unified_patch(path:str, unified_str: str):
-
-    path = os.path.abspath(path)
-    root_dir = os.path.dirname(path)
+def str_replace(path: str, old_str: str, new_str: str) -> str:
+    with open(path, 'r') as f:
+        content = f.read()
     
-    with tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8') as tmp:
-        tmp.write(unified_str)
-        tmp_path = tmp.name
-
-    p = patch_ng.fromfile(tmp_path)
-
-    if not p:
-        raise Exception("invalid patch format")
-
-    success = p.apply(root=root_dir)
-    os.remove(tmp_path)
-    if not success:
-        raise Exception("Patch failed to apply cleanly")
-
-    # Read updated content
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    count = content.count(old_str)
+    if count == 0:
+        return f"ERROR: old_str not found in {path}"
+    if count > 1:
+        return f"ERROR: old_str found {count} times — add more context to make it unique"
     
-
-# path = "sample.txt"
-
+    new_content = content.replace(old_str, new_str, 1)
+    with open(path, 'w') as f:
+        f.write(new_content)
+    
+    return f"OK: replaced in {path}"
+   
 # patch_str = """\
-# --- sample.txt
-# +++ sample.txt
-# @@ -6,3 +6,3 @@
-#  nothing
-# -change again
-# +changed
-#  to anything
+# --- route.ts
+# +++ route.ts
+# @@ -1,4 +1,5 @@
+#  import { NextRequest, NextResponse } from 'next/server';
+# +import { supabase } from '@/lib/supabase';
+ 
+#  export async function POST(request: NextRequest) {
+#    try {
 # """
 
-# print(apply_unified_patch(r"C:\Users\Apurav\Downloads\Dynamic_IDE\sample.txt", patch_str))
+# print(apply_patch(r"C:\Users\Apurav\Downloads\Nao_medical\nao-medical\app\api\upload-audio\route.ts", patch_str))
     
 
 # ---------- TERMINAL ----------

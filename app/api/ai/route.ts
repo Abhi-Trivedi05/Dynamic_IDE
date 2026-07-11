@@ -2,29 +2,28 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
     try {
-        const { messages } = await req.json();
-        const apiKey = process.env.XAI_API_KEY;
+        const { messages, cwd } = await req.json();
 
-        if (!apiKey) {
-            return NextResponse.json({ error: "XAI_API_KEY is not configured" }, { status: 500 });
+        if (!cwd) {
+            return NextResponse.json({ error: "No workspace directory (cwd) provided" }, { status: 400 });
         }
 
-        const response = await fetch("https://api.x.ai/v1/chat/completions", {
+        // The FastAPI agent expects a single "goal". We can combine the chat history 
+        // to give it context, but emphasize the last user message.
+        const lastUserMessage = messages[messages.length - 1]?.content || "";
+        
+        const goal = `Chat History:\n${messages.map((m: any) => `[${m.role}]: ${m.content}`).join('\n')}\n\nTask:\n${lastUserMessage}`;
+
+        const backendUrl = process.env.AGENT_BACKEND_URL || "http://127.0.0.1:8000";
+
+        const response = await fetch(`${backendUrl}/invoke`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-                model: "grok-beta", // or grok-2 if available
-                messages: [
-                    {
-                        role: "system",
-                        content: "You are an AI assistant integrated into a web-based IDE. Help the user with code, explaining files, and general questions. Be concise and professional."
-                    },
-                    ...messages
-                ],
-                stream: false, // Keeping it simple for now, can add streaming later
+                goal: goal,
+                cwd: cwd
             }),
         });
 
@@ -37,23 +36,43 @@ export async function POST(req: Request) {
         }
 
         if (!response.ok) {
-            let errorMessage = "Failed to fetch from xAI";
-            if (data.error) {
-                if (typeof data.error === 'string') errorMessage = data.error;
-                else if (data.error.message) errorMessage = data.error.message;
-            } else if (data.message) {
-                errorMessage = data.message;
+            let errorMessage = "Failed to fetch from Agent Backend";
+            if (data.detail) {
+                errorMessage = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail);
             }
-
-            // Check for specific xAI "credit" error in the body
-            if (resText.includes("credits") || resText.includes("balance")) {
-                errorMessage = "xAI Error: Your account has no credits. Please visit https://console.x.ai to add credits.";
-            }
-
             return NextResponse.json({ error: errorMessage }, { status: response.status });
         }
 
-        return NextResponse.json(data);
+        // Map the agent's response to the format expected by the frontend
+        // Currently the frontend expects: { choices: [{ message: { content: "..." } }] }
+        // We will enrich this content with the agent's runtime context so the user sees what it did.
+        
+        let agentOutput = "";
+        
+        if (data.runtime_context && data.runtime_context.length > 0) {
+            agentOutput += "### Agent Logs:\n```\n";
+            agentOutput += data.runtime_context.join("\n");
+            agentOutput += "\n```\n\n";
+        }
+        
+        if (data.ans) {
+            agentOutput += `### Final Answer:\n${data.ans}`;
+        } else if (data.error) {
+            agentOutput += `### Error:\n${data.error}`;
+        } else {
+            agentOutput += "Agent completed tasks successfully.";
+        }
+
+        return NextResponse.json({
+            choices: [
+                {
+                    message: {
+                        role: "assistant",
+                        content: agentOutput
+                    }
+                }
+            ]
+        });
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }

@@ -1,8 +1,12 @@
+import os
+from dotenv import load_dotenv
 from pymongo import MongoClient
 
-client = MongoClient("mongodb+srv://apurav0711:kXLSO7w71BaWda0d@cluster0.loz7f.mongodb.net/?retryWrites=true&w=majority&appName=cluster0")
+load_dotenv()
+
+mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+client = MongoClient(mongo_uri)
 
 db = client['dynamic_ide']
 
 versions_collection = db['file_versions']
-
