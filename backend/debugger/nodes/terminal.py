@@ -15,7 +15,11 @@ def TerminalNode(state):
     instruction = state['goal']
     cwd = state['cwd']
 
-    prompt = f"""
+    execution_history = []
+    logs = []
+
+    for step in range(10):
+        prompt = f"""
 You are the Terminal Agent. Your task:
 {instruction}
 
@@ -23,47 +27,58 @@ You have access to terminal commands. Output exactly one JSON object matching:
 1) run_command: {{"name": "run_command", "parameters": {{"command": "string", "time_limit": 20}}}}
 2) done: {{"name": "done", "parameters": {{}}}}
 
+PREVIOUS COMMAND OUTPUTS / LOGS:
+{"\n".join(logs)}
+
+CURRENT SUBTASK STEP: {step + 1}
 Output the JSON only. No explanations.
 """
-    res = llm.invoke(prompt)
-    try:
-        content = res.content
-        if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
-            content = content[0].get("text", str(content))
-        elif isinstance(content, str) and content.strip().startswith("[{'type':"):
-            import ast
-            try:
-                parsed = ast.literal_eval(content.strip())
-                content = parsed[0].get("text", content)
-            except Exception:
-                pass
-        decision = extract_json(content)
-        if isinstance(decision, list):
-            decision = decision[0]
-    except Exception as e:
-        return {"error": f"Terminal validation failed: {str(e)}"}
-
-    tool_name = decision.get("name")
-    params = decision.get("parameters", {})
-    history = [f"terminal: {tool_name}"]
-    logs = []
-
-    if tool_name == "run_command":
+        res = llm.invoke(prompt)
+        print(f"Terminal Step {step + 1} Result:", res)
         try:
-            cmd = params["command"]
-            time_limit = params.get("time_limit", 20)
-            result = run_command(cmd, cwd, str(time_limit))
-            output = result["stdout"] + result["stderr"]
-            if len(output) > 2000:
-                output = output[:1000] + "\n...[TRUNCATED]...\n" + output[-1000:]
-            logs.append(f"[COMMAND] {cmd}\n{output}")
+            content = res.content
+            if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+                content = content[0].get("text", str(content))
+            elif isinstance(content, str) and content.strip().startswith("[{'type':"):
+                import ast
+                try:
+                    parsed = ast.literal_eval(content.strip())
+                    content = parsed[0].get("text", content)
+                except Exception:
+                    pass
+            decision = extract_json(content)
+            if isinstance(decision, list):
+                decision = decision[0]
         except Exception as e:
-            logs.append(f"[ERROR] run_command failed: {str(e)}")
+            logs.append(f"[ERROR] Terminal validation failed: {str(e)}")
+            break
 
-    elif tool_name == "done":
-        logs.append("[TERM] Finished subtask.")
+        tool_name = decision.get("name")
+        params = decision.get("parameters", {})
+        execution_history.append(f"terminal: {tool_name}")
+
+        if tool_name == "done":
+            logs.append("[TERM] Finished subtask.")
+            break
+
+        elif tool_name == "run_command":
+            try:
+                cmd = params["command"]
+                time_limit = params.get("time_limit", 20)
+                result = run_command(cmd, cwd, str(time_limit))
+                output = result["stdout"] + result["stderr"]
+                if len(output) > 2000:
+                    output = output[:1000] + "\n...[TRUNCATED]...\n" + output[-1000:]
+                logs.append(f"[COMMAND] {cmd}\n{output}")
+            except Exception as e:
+                logs.append(f"[ERROR] run_command failed: {str(e)}")
         
+        else:
+            logs.append(f"[ERROR] Unknown tool: {tool_name}")
+            break
+
     return {
-        "execution_history": history,
+        "execution_history": execution_history,
         "runtime_context": logs
     }
+

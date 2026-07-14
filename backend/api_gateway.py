@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import sys
@@ -11,6 +12,15 @@ from debugger.agent import agent
 from debugger.state import AgentState
 
 app = FastAPI(title="Dynamic IDE Backend API")
+
+# Enable CORS so a remote hosted web UI can query localhost agent
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins; in production, you can restrict this to your Vercel URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class AgentRequest(BaseModel):
     goal: str

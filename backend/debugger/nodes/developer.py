@@ -15,7 +15,12 @@ def DeveloperNode(state):
     instruction = state['goal']
     cwd = state['cwd']
 
-    prompt = f"""
+    file_context = dict(state.get('file_context', {}))
+    execution_history = []
+    logs = []
+
+    for step in range(10):
+        prompt = f"""
 You are the Developer Agent. Your task:
 {instruction}
 
@@ -26,66 +31,78 @@ You have access to file modification tools. Output exactly one JSON object match
 4) done: {{"name": "done", "parameters": {{}}}}
 
 FILES READ (with content):
-{json.dumps(state.get('file_context', {}), indent=2)}
+{json.dumps(file_context, indent=2)}
+
+CURRENT SUBTASK STEP: {step + 1}
 Output the JSON only. No explanations.
 """
-    res = llm.invoke(prompt)
-    try:
-        content = res.content
-        if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
-            content = content[0].get("text", str(content))
-        elif isinstance(content, str) and content.strip().startswith("[{'type':"):
-            import ast
+        res = llm.invoke(prompt)
+        print(f"Developer Step {step + 1} Result:", res)
+        try:
+            content = res.content
+            if isinstance(content, list) and len(content) > 0 and isinstance(content[0], dict):
+                content = content[0].get("text", str(content))
+            elif isinstance(content, str) and content.strip().startswith("[{'type':"):
+                import ast
+                try:
+                    parsed = ast.literal_eval(content.strip())
+                    content = parsed[0].get("text", content)
+                except Exception:
+                    pass
+            decision = extract_json(content)
+            if isinstance(decision, list):
+                decision = decision[0]
+        except Exception as e:
+            logs.append(f"[ERROR] Developer validation failed: {str(e)}")
+            break
+
+        tool_name = decision.get("name")
+        params = decision.get("parameters", {})
+        execution_history.append(f"developer: {tool_name}")
+
+        if tool_name == "done":
+            logs.append("[DEV] Finished subtask.")
+            break
+
+        elif tool_name == "read_file":
             try:
-                parsed = ast.literal_eval(content.strip())
-                content = parsed[0].get("text", content)
-            except Exception:
-                pass
-        decision = extract_json(content)
-        if isinstance(decision, list):
-            decision = decision[0]
-    except Exception as e:
-        return {"error": f"Developer validation failed: {str(e)}"}
+                path = params["path"]
+                full_path = os.path.join(cwd, path)
+                content = read_file(full_path)
+                file_context[path] = content
+                logs.append(f"[READ] {path}")
+            except Exception as e:
+                logs.append(f"[ERROR] read_file failed: {str(e)}")
 
-    tool_name = decision.get("name")
-    params = decision.get("parameters", {})
-    history = [f"developer: {tool_name}"]
-    context_updates = {}
-    logs = []
+        elif tool_name == "str_replace":
+            try:
+                path = params["path"]
+                full_path = os.path.join(cwd, path)
+                result = str_replace(full_path, params["old_str"], params["new_str"])
+                if not result.startswith("ERROR"):
+                    content = read_file(full_path)
+                    file_context[path] = content
+                logs.append(f"[PATCH] {path} -> {result}")
+            except Exception as e:
+                logs.append(f"[ERROR] patch failed: {str(e)}")
 
-    if tool_name == "read_file":
-        try:
-            path = params["path"]
-            full_path = os.path.join(cwd, path)
-            content = read_file(full_path)
-            context_updates[path] = content
-            logs.append(f"[READ] {path}")
-        except Exception as e:
-            logs.append(f"[ERROR] read_file failed: {str(e)}")
-
-    elif tool_name == "str_replace":
-        try:
-            path = params["path"]
-            full_path = os.path.join(cwd, path)
-            result = str_replace(full_path, params["old_str"], params["new_str"])
-            logs.append(f"[PATCH] {path} -> {result}")
-        except Exception as e:
-            logs.append(f"[ERROR] patch failed: {str(e)}")
-
-    elif tool_name == "write_file":
-        try:
-            path = params["path"]
-            full_path = os.path.join(cwd, path)
-            write_file(full_path, params["content"])
-            logs.append(f"[WRITE] {path}")
-        except Exception as e:
-            logs.append(f"[ERROR] write_file failed: {str(e)}")
-
-    elif tool_name == "done":
-        logs.append("[DEV] Finished subtask.")
+        elif tool_name == "write_file":
+            try:
+                path = params["path"]
+                full_path = os.path.join(cwd, path)
+                write_file(full_path, params["content"])
+                file_context[path] = params["content"]
+                logs.append(f"[WRITE] {path}")
+            except Exception as e:
+                logs.append(f"[ERROR] write_file failed: {str(e)}")
         
+        else:
+            logs.append(f"[ERROR] Unknown tool: {tool_name}")
+            break
+
     return {
-        "execution_history": history,
+        "execution_history": execution_history,
         "runtime_context": logs,
-        "file_context": context_updates
+        "file_context": file_context
     }
+
